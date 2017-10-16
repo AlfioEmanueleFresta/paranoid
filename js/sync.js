@@ -267,22 +267,39 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 	};
 
 	self.getCertificates = async function() {
-		let publicCertificate = preferences.get("sync:certificate:public");
-		let privateCertificate = preferences.get("sync:certificate:private");
+		let publicSignatureCertificate   = preferences.get("sync:certificate:public:signature");
+		let publicEncryptionCertificate  = preferences.get("sync:certificate:public:encryption");
+		let privateSignatureCertificate  = preferences.get("sync:certificate:private:signature");
+		let privateEncryptionCertificate = preferences.get("sync:certificate:private:encryption");
 
-		if (!publicCertificate) {
+		if (!publicSignatureCertificate) {
 			let newCertificates = await self.generateCertificates();
 
-			publicCertificate = newCertificates.public;
-			privateCertificate = newCertificates.private;
+			publicSignatureCertificate = newCertificates.public.signature;
+			publicEncryptionCertificate = newCertificates.public.encryption;
+			privateSignatureCertificate = newCertificates.private.signature;
+			privateEncryptionCertificate = newCertificates.private.encryption;
 
-			preferences.set("sync:certificate:public", publicCertificate);
-			preferences.set("sync:certificate:private", privateCertificate);
+			preferences.set("sync:certificate:public:signature",   publicSignatureCertificate);
+			preferences.set("sync:certificate:public:encryption",  publicEncryptionCertificate);
+			preferences.set("sync:certificate:private:signature",  privateSignatureCertificate);
+			preferences.set("sync:certificate:private:encryption", privateEncryptionCertificate);
 		}
 
-		console.debug("sync:getCertificates", publicCertificate, privateCertificate);
-		return {"public": publicCertificate,
-				"private": privateCertificate};
+		let certificates = {
+			"public": {
+				"signature": publicSignatureCertificate,
+				"encryption": publicEncryptionCertificate
+			},
+			"private": {
+				"signature": privateSignatureCertificate,
+				"encryption": privateEncryptionCertificate
+			}
+		}
+
+		console.debug("sync:getCertificates", certificates);
+
+		return certificates;
 	};
 
 	/**

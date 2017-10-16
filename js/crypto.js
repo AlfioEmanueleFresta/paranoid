@@ -72,35 +72,39 @@ define(function() {
 		});
 	};
 
+	var generateAsymmetricKeyPair = async function(algorithm, usages) {
+		let keypair;
+		try {
+			keypair = await crypto.subtle.generateKey(algorithm, true, usages);
+
+		} catch (error) {
+			console.error("crypto:generateAsymmetricKeyPair", error);
+			throw error;
+		}
+
+		console.debug("crypto:generateAsymmetricKeyPair");
+		let nativePublic = keypair.publicKey;
+		let nativePrivate = keypair.privateKey;
+		let exportPublicPromise = exportNativeKey(nativePublic);
+		let exportPrivatePromise = exportNativeKey(nativePrivate);
+
+		let keys = await Promise.all([exportPublicPromise, exportPrivatePromise]);
+		let publicKey = keys[0];
+		let privateKey = keys[1];
+		return {"public": publicKey, "private": privateKey};
+	}
+
 	/**
 	 * Returns a promise for a keypair.
 	 *
 	 * @return {Object({private: Object, public: Object})}	Key pair
 	 */
 	self.generateSignatureKeyPair = function() {
-		return new Promise(function(resolve, reject) {
-			crypto.subtle.generateKey(ALGORITHM_ASYMMETRIC_SIGNATURE, true, ["sign", "verify"])
-			.then(function(keypair) {
-				console.debug("crypto:generateSignatureKeyPair");
-				let nativePublic = keypair.publicKey;
-				let nativePrivate = keypair.privateKey;
-				let exportPublicPromise = exportNativeKey(nativePublic);
-				let exportPrivatePromise = exportNativeKey(nativePrivate);
+		return generateAsymmetricKeyPair(ALGORITHM_ASYMMETRIC_SIGNATURE, ["sign", "verify"]);
+	};
 
-				Promise.all([exportPublicPromise, exportPrivatePromise])
-				.then(function(keys) {
-					let publicKey = keys[0];
-					let privateKey = keys[1];
-					resolve({"public": publicKey, "private": privateKey});
-
-				});
-
-			}).catch(function(error) {
-				console.error("crypto:generateSignatureKeyPair", error);
-				reject(error);
-
-			});
-		});
+	self.generateEncryptionKeyPair = function() {
+		return generateAsymmetricKeyPair(ALGORITHM_ASYMMETRIC_ENCRYPTION, ["encrypt", "decrypt"]);
 	};
 
 	/**

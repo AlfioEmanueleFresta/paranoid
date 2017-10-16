@@ -10,19 +10,22 @@ define(['./crypto'], function(crypto) {
 	/** 
 	 * Generate a certificate pair.
 	 */
-	self.generateCertificates = function() {
-		return new Promise(function(resolve, reject) {
-			crypto.generateSignatureKeyPair()
-			.then(function(keyPair) {
-				resolve({"public": keyPair.public},
-						{"private": keyPair.private})
+	self.generateCertificates = async function() {
+		console.log("before");
+		let signatureKeyPair  = await crypto.generateSignatureKeyPair();
+		let encryptionKeyPair = await crypto.generateEncryptionKeyPair();
+		console.log("after", signatureKeyPair, encryptionKeyPair);
 
-			}).catch(function(error) {
-				console.error("certificates:generateCertificate", error);
-				reject(error);
-
-			});
-		});
+		return {
+			"public": {
+				"signature":  signatureKeyPair.public,
+				"encryption": encryptionKeyPair.public
+			},
+			"private": {
+				"signature":  signatureKeyPair.private,
+				"encryption": encryptionKeyPair.private
+			}
+		};
 	};
 
 	self.init = function() {
