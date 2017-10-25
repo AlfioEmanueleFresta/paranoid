@@ -43,42 +43,75 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 			console.debug("sync:connect:open", id);
 			peerId = id;
 		});
+		self.peer.on("error", function(error) {
+			console.debug("sync:onerror", error);
+		});
 
-		self.peer.on('connection', function(conn) {
-			console.debug("connection", conn);
-			registerConnection(conn);
+		self.peer.on("connection", function(conn) {
+			console.debug("sync:connection", conn.peer);
+			self.registerConnection(conn, false);
 		});
 
 		return true;
 	};
 
-	self.registerConnection = async function(newConnection) {
+	self.connectToPeer = function(peerId) {
+		console.debug("sync:connectToPeer", peerId);
+		let newConnection;
+		try {
+			newConnection = self.peer.connect(peerId);
+		} catch (error) {
+			console.error("sync:connectToPeer", error);
+		}
+		self.registerConnection(newConnection, true);
+	};
+
+	self.disconnectPeer = function(peerId) {
+		console.debug("sync:disconnectPeer", peerId);
+		let connection = self.connections[peerId];
+		if ( connection ) {
+			connection.close();
+			delete self.connections[peerId];
+		}
+	};
+
+	self.registerConnection = async function(newConnection, outbound) {
+		console.debug("sync:registerConnection", newConnection);
 		let peerId = newConnection.peer;
 
-		let shouldRegister = confirm("Do you want to accept a connection from " + peerId + "?");
-		if (!shouldRegister) {
-			console.debug("sync:registerConnection", "ignored incoming connection from" + peerId);
-			return;
-		}		
+		if (!outbound) {
+			let shouldRegister = confirm("Do you want to accept a connection from " + peerId + "?");
+			if (!shouldRegister) {
+				console.debug("sync:registerConnection", "ignored incoming connection from" + peerId);
+				return;
+			}
+		}
 
 		self.connections[peerId] = newConnection;
 		console.debug("sync:registerConnection", peerId);
 
 		// Add connection handlers
-		connection.on('open', function() {
+		newConnection.on('open', function() {
 			console.debug("sync:registerConnection:open", peerId);
 
-			connection.on('data', function(data) {
+			newConnection.on('data', function(data) {
 				self.dispatch(peerId, data);
+			});
+
+			newConnection.on('close', function() {
+				self.disconnectPeer(peerId);
 			});
 
 			self.sendHandshake(peerId);
 		});
+
+
 	};
 
-	self.sendHandshake = function(peerId) {
+	self.sendHandshake = async function(peerId) {
+		let publicCertificate = await self.getCertificates();
 		let handhakeData = {
-			"certificate": self.getCertificates().public
+			"certificate": publicCertificate.public
 			// TODO version information
 		};
 		self.sendPlaintextMessage(peerId, "handshake", handhakeData);
@@ -118,10 +151,13 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 	var PEER_CERTIFICATES = {};
 
 	self.getPeerCertificate = function(peerId) {
-		return PEER_CERTIFICATES[peerId];
+		let certificate = PEER_CERTIFICATES[peerId];
+		console.debug("sync:getPeerCertificate", peerId, certificate);
+		return certificate;
 	}
 
 	self.setPeerCertificate = function(peerId, certificate) {
+		console.debug("sync:setPeerCertificate", peerId, certificate);
 		PEER_CERTIFICATES[peerId] = certificate;
 	}
 
@@ -134,10 +170,13 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 		let knownCertificate = self.getPeerCertificate(peerId);
 		let presentedCertificate = message.certificate;
 
+		console.debug("sync:handleHandshake", peerId, {"known": knownCertificate,
+													   "presented": presentedCertificate});
+
 		if (knownCertificate === undefined) {
 			// This is the first time we connect with this peer.
 
-			let shouldContinue = confirm(peerId = " presented certificate " + presentedCertificate + ", accept?");
+			let shouldContinue = confirm(peerId + " presented certificate " + presentedCertificate + ", accept?");
 			if (!shouldContinue) {
 				console.warn("sync:handleHandshake", "Certificate presented by peer", peerId, "was refused by user", presentedCertificate)
 				self.dropConnection(peerId);
@@ -182,6 +221,15 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 		if (message.encrypted) {
 			message = self.decryptMessage(peerId, message);
 		}
+
+		let handler = HANDLERS[message.type];
+		if (!handler) {
+			console.warn("sync:dispatch", peerId, "Unknown request type", message);
+			return;
+		}
+
+		// Handle message
+		handler(peerId, message);
 	};
 
 	/**
@@ -220,7 +268,7 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 			return;
 		}
 		console.debug("sync:sendRaw", peerId, rawMessage);
-		connection.send(message);
+		connection.send(rawMessage);
 	};
 
 	self.sendPlaintextMessage = function(peerId, type, data) {

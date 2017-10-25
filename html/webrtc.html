@@ -15,27 +15,22 @@
 
     <div class="container">
 
-      <h1>Registration</h1>
-      <p>
-        <button type="button" class="btn btn-primary"
-          id="registerButton">
-          Register
-        </button>
-      </p>
-      <p>
-        <input type="text" id="registrationToken" class="form-control" />
-      </p>
 
-      <hr />
 
       <h2>Connect</h2>
+      <p>My peer ID: <code id="peerId"></code></p>
       <p>
-        <input type="text" id="otherId" class="form-control" />
+        <input type="text" id="otherId" class="form-control"
+               placeholder="Other party's ID" />
       </p>
       <p>
         <button type="button" class="btn btn-primary"
                 id="connectButton">
           Connect
+        </button>
+        <button type="button" class="btn btn-secondary"
+                id="disconnectButton">
+          Disconnect
         </button>
       </p>
 

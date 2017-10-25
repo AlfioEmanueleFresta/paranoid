@@ -15,7 +15,7 @@ define(function() {
 		/* Synchronisation */
 		"sync:id": 			undefined,		// The PeerID of this machine
 		"sync:enabled": 	true,			// Whether the wallets sharing feature is enabled
-		"sync:host": 		"91.134.242.223",
+		"sync:host": 		"127.0.0.1", //"91.134.242.223",
 		"sync:port": 		9000,
 		"sync:secure": 		false
 

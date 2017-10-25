@@ -11,10 +11,9 @@ define(['./crypto'], function(crypto) {
 	 * Generate a certificate pair.
 	 */
 	self.generateCertificates = async function() {
-		console.log("before");
+		console.debug("certificates:generateCertificates", "Please wait...");
 		let signatureKeyPair  = await crypto.generateSignatureKeyPair();
 		let encryptionKeyPair = await crypto.generateEncryptionKeyPair();
-		console.log("after", signatureKeyPair, encryptionKeyPair);
 
 		return {
 			"public": {
