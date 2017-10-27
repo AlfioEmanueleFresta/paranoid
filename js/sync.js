@@ -3,8 +3,8 @@
  *
  * Synchronisation utility.
  */
-define(['./preferences', './certificates'], function(preferences, certificates) {
-
+define(['./preferences', './certificates', './stores/certificates'], 
+	function(preferences, certificates, certStore) {
 
 	var PREFERENCES_CHECK_EVERY_MS = 5000;
 
@@ -118,20 +118,20 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 	};
 
 	var unencryptedHandler = function(handler) {
-		let modifiedHandler = function(peerId, message) {
+		let modifiedHandler = async function(peerId, message) {
 			if (message.encrypted) {
 				console.error("sync:unencryptedHandler", "Unencrypted message is actually encrypted.",
 							  message);
 				return;
 			}
 
-			handler(peerId, message);
+			return handler(peerId, message);
 		};
 		return modifiedHandler;
 	};
 
 	var encryptedHandler = function(handler) {
-		let modifiedHandler = function(peerId, message) {
+		let modifiedHandler = async function(peerId, message) {
 			if (!message.encrypted) {
 				console.error("sync:encryptedHandler", "Encrypted message is not actually encrypted.",
 							  message);
@@ -143,37 +143,26 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 				return;
 			}
 
-			hander(peerId, decrypted);
+			return hander(peerId, decrypted);
 		}
 		return modifiedHandler;
 	};
 
 	var PEER_CERTIFICATES = {};
 
-	self.getPeerCertificate = function(peerId) {
-		let certificate = PEER_CERTIFICATES[peerId];
-		console.debug("sync:getPeerCertificate", peerId, certificate);
-		return certificate;
-	}
-
-	self.setPeerCertificate = function(peerId, certificate) {
-		console.debug("sync:setPeerCertificate", peerId, certificate);
-		PEER_CERTIFICATES[peerId] = certificate;
-	}
-
 	var HANDLERS = {};
 
 	/**
 	 * Handle an handshake message.
 	 */
-	var handleHandshake = function(peerId, message) {
-		let knownCertificate = self.getPeerCertificate(peerId);
+	var handleHandshake = async function(peerId, message) {
+		let knownCertificate = await certStore.getPeerCertificate(peerId);
 		let presentedCertificate = message.certificate;
 		
 		console.debug("sync:handleHandshake", peerId, {"known": knownCertificate,
 													   "presented": presentedCertificate});
 
-		if (knownCertificate === undefined) {
+		if (!knownCertificate) {
 			// This is the first time we connect with this peer.
 
 			let shouldContinue = confirm(peerId + " presented certificate " + presentedCertificate + ", accept?");
@@ -184,12 +173,11 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 			}
 
 			// User accepted certificate
-			self.setPeerCertificate(peerId, presentedCertificate);
+			certStore.setPeerCertificate(peerId, presentedCertificate);
 			knownCertificate = presentedCertificate;
 			console.debug("sync:handleHandshake", "Certificate presented by peer", peerId, "was accepted.");
-		}
 
-		if (!certificates.compareCertificates(knownCertificate, presentedCertificate)) {
+		} else if (!certificates.compareCertificates(knownCertificate, presentedCertificate)) {
 			// Something is wrong!!1!
 			console.warn("sync:handleHandshake", "Peer presented different certificate. Refusing connection.");
 			self.dropConnection(peerId);
@@ -207,7 +195,7 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 
 	};
 
-	var handleHello = function(peerId, message) {
+	var handleHello = async function(peerId, message) {
 		console.log("sync:handleHello", peerId, "says hello!", message);
 	};
 
