@@ -169,7 +169,7 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 	var handleHandshake = function(peerId, message) {
 		let knownCertificate = self.getPeerCertificate(peerId);
 		let presentedCertificate = message.certificate;
-
+		
 		console.debug("sync:handleHandshake", peerId, {"known": knownCertificate,
 													   "presented": presentedCertificate});
 
@@ -189,9 +189,9 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 			console.debug("sync:handleHandshake", "Certificate presented by peer", peerId, "was accepted.");
 		}
 
-		if (knownCertificate !== presentedCertificate) {
+		if (!certificates.compareCertificates(knownCertificate, presentedCertificate)) {
 			// Something is wrong!!1!
-			console.warn("sync:handleHandshake", "Peer presented different certificate. Refusing connection.")
+			console.warn("sync:handleHandshake", "Peer presented different certificate. Refusing connection.");
 			self.dropConnection(peerId);
 
 			// Notify user
@@ -200,8 +200,11 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 			// TODO allow change of certificate?
 		}
 
+		console.debug("sync:handleHandshake", peerId, "Handshake successful.");
+
 		// Send an hello message.
 		self.sendEncryptedMessage(peerId, {"hello": "Hey!"});
+
 	};
 
 	var handleHello = function(peerId, message) {
@@ -229,7 +232,7 @@ define(['./preferences', './certificates'], function(preferences, certificates) 
 		}
 
 		// Handle message
-		handler(peerId, message);
+		handler(peerId, message.data);
 	};
 
 	/**
