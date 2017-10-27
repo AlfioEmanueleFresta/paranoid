@@ -19,57 +19,32 @@ define(function() {
 	self = {};
 
 
-	var exportNativeKey = function(nativeKey) {
-		return new Promise(function(resolve, reject) {
-			crypto.subtle.exportKey("jwk", nativeKey)
-			.then(function(jwk) {
-				resolve(jwk);
-
-			}).catch(function(error) {
-				console.error("crypto:exportNativeKey", error);
-				reject(error);
-
-			});
-		});
+	var exportNativeKey = async function(nativeKey) {
+		let jwk = await crypto.subtle.exportKey("jwk", nativeKey)
+		return jwk;
 	};
 
 	/**
 	 * Returns a promise to load a native private CryptoKey from the
 	 * Javascript Object representing the JWK key.
 	 */
-	var loadSignaturePrivateKey = function(jwk) {
-		return new Promise(function(resolve, reject) {
-			crypto.subtle.importKey("jwk", jwk, ALGORITHM_ASYMMETRIC_SIGNATURE,
-									true, ["sign"])
-			.then(function(nativeKey) {
-				resolve(nativeKey);
-
-			}).catch(function(error) {
-				console.error("crypto:loadSignaturePrivateKey", error);
-				reject(error);
-
-			})
-		});
+	var loadSignaturePrivateKey = async function(jwk) {
+		let nativeKey = await crypto.subtle.importKey(
+			"jwk", jwk, ALGORITHM_ASYMMETRIC_SIGNATURE, true, ["sign"]
+		);
+		return nativeKey;
 	};
 
 	/**
 	 * Returns a promise to load a native private CryptoKey from the
 	 * Javascript Object representing the JWK key.
 	 */
-	var loadSignaturePublicKey = function(keyObject) {
+	var loadSignaturePublicKey = async function(keyObject) {
 		let jwk = JSON.stringify(keyObject);
-		return new Promise(function(resolve, reject) {
-			crypto.subtle.importKey("jwk", jwk, ALGORITHM_ASYMMETRIC_SIGNATURE,
-									true, ["verify"])
-			.then(function(nativeKey) {
-				resolve(nativeKey);
-
-			}).catch(function(error) {
-				console.error("crypto:loadSignaturePublicKey", error);
-				reject(error);
-
-			})
-		});
+		let nativeKey = await crypto.subtle.importKey(
+			"jwk", jwk, ALGORITHM_ASYMMETRIC_SIGNATURE, true, ["verify"]
+		);
+		return nativeKey;
 	};
 
 	var generateAsymmetricKeyPair = async function(algorithm, usages) {
@@ -110,42 +85,23 @@ define(function() {
 	/**
 	 * Return a promise to sign some binary.
 	 */
- 	self.signBinaryData = function(privateKey, data) {
- 		return new Promise(function(resolve, reject) {
- 			loadSignaturePrivateKey(privateKey)
- 			.then(function(nativeKey) {
- 				crypto.subtle.sign(ALGORITHM_ASYMMETRIC_SIGNATURE, nativeKey, data)
- 				.then(function(signature) {
- 					resolve(signature);
-
- 				})
- 				.catch(function(error) {
- 					console.error("crypto:signBinaryData", error);
- 					reject(error);
-
- 				})
- 			});
- 		});
+ 	self.signBinaryData = async function(privateKey, data) {
+ 		let nativeKey = await loadSignaturePrivateKey(privateKey);
+ 		let signature = await crypto.subtle.sign(
+ 			ALGORITHM_ASYMMETRIC_SIGNATURE, nativeKey, data
+		);
+ 		return signature;
  	};
 
  	/**
  	 * Return a promise to verify a signature using a key.
  	 */
- 	self.verifySignatureBinary = function(publicKey, data, signature) {
- 		return new Promise(function(resolve, reject) {
- 			loadSignaturePublicKey(publicKey)
- 			.then(function(nativeKey) {
- 				crypto.subtle.verify(ALGORITHM_ASYMMETRIC_SIGNATURE, nativeKey,
- 									 signature, data)
- 				.then(function(result) {
- 					resolve(result);
-
- 				}).catch(function(error) {
- 					console.error("crypto:verifySignatureBinary", error);
-
- 				});
- 			});
- 		});
+ 	self.verifySignatureBinary = async function(publicKey, data, signature) {
+ 		let nativeKey = await loadSignaturePublicKey(publicKey);
+ 		let result = await crypto.subtle.verify(
+ 			ALGORITHM_ASYMMETRIC_SIGNATURE, nativeKey, signature, data
+		);
+ 		return result;
  	};
 
 
