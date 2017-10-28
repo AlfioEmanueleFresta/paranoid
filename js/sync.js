@@ -3,8 +3,9 @@
  *
  * Synchronisation utility.
  */
-define(['./preferences', './certificates', './stores/certificates'], 
-	function(preferences, certificates, certStore) {
+define(['./preferences', './certificates', './stores/certificates', 
+		'./crypto', './database'], 
+	function(preferences, certificates, certStore, crypto, db) {
 
 	var PREFERENCES_CHECK_EVERY_MS = 5000;
 
@@ -57,6 +58,24 @@ define(['./preferences', './certificates', './stores/certificates'],
 
 	self.connectToPeer = function(peerId) {
 		console.debug("sync:connectToPeer", peerId);
+
+		// Check if a connection was already there
+		if (self.connections[peerId]) {
+			let isAlive = self.connections[peerId].alive;
+			if (!isAlive) {
+				console.debug("sync:connectToPeer", peerId,
+							  "The connection had been established, but was not " +
+							  "alive. Reconnecting...");
+				self.disconnectPeer(peerId);
+
+			} else {
+				console.warn("sync:connectToPeer", peerId,
+						     "Connection already established, and peer alive.");
+				return;
+
+			}
+		}
+
 		let newConnection;
 		try {
 			newConnection = self.peer.connect(peerId);
@@ -67,11 +86,11 @@ define(['./preferences', './certificates', './stores/certificates'],
 	};
 
 	self.disconnectPeer = function(peerId) {
-		console.debug("sync:disconnectPeer", peerId);
 		let connection = self.connections[peerId];
-		if ( connection ) {
-			connection.close();
+		if (connection) {
 			delete self.connections[peerId];
+			connection.close();
+			console.info("sync:disconnectPeer", peerId, "Disconnected from peer.");
 		}
 	};
 
@@ -80,7 +99,9 @@ define(['./preferences', './certificates', './stores/certificates'],
 		let peerId = newConnection.peer;
 
 		if (!outbound) {
-			let shouldRegister = confirm("Do you want to accept a connection from " + peerId + "?");
+			let isKnownPeer = !!(await certStore.getPeerCertificate(peerId));
+			console.debug("sync:registerConnection", "isKnownPeer", isKnownPeer);
+			let shouldRegister = isKnownPeer || confirm("Do you want to accept a connection from " + peerId + "?");
 			if (!shouldRegister) {
 				console.debug("sync:registerConnection", "ignored incoming connection from" + peerId);
 				return;
@@ -92,7 +113,8 @@ define(['./preferences', './certificates', './stores/certificates'],
 
 		// Add connection handlers
 		newConnection.on('open', function() {
-			console.debug("sync:registerConnection:open", peerId);
+			console.debug("sync:registerConnection:open", peerId,
+						  (outbound) ? "(outbound)" : "(inbound)");
 
 			newConnection.on('data', function(data) {
 				self.dispatch(peerId, data);
@@ -102,16 +124,21 @@ define(['./preferences', './certificates', './stores/certificates'],
 				self.disconnectPeer(peerId);
 			});
 
-			self.sendHandshake(peerId);
+			if (outbound) {
+				console.debug("sync:registerConnection",
+							  "Outbound connection. Sending handshake request.");
+				sendHandshake(peerId, outbound);
+			}
 		});
 
 
 	};
 
-	self.sendHandshake = async function(peerId) {
+	var sendHandshake = async function(peerId, outbound) {
 		let publicCertificate = await self.getCertificates();
 		let handhakeData = {
-			"certificate": publicCertificate.public
+			"certificate": 	publicCertificate.public,
+			"outbound": 	!!outbound
 			// TODO version information
 		};
 		self.sendPlaintextMessage(peerId, "handshake", handhakeData);
@@ -125,7 +152,7 @@ define(['./preferences', './certificates', './stores/certificates'],
 				return;
 			}
 
-			return handler(peerId, message);
+			return handler(peerId, message.data);
 		};
 		return modifiedHandler;
 	};
@@ -138,12 +165,12 @@ define(['./preferences', './certificates', './stores/certificates'],
 				return;
 			}
 
-			let decrypted = self.decryptMessage(peerId, message);
+			let decrypted = await self.decryptMessage(peerId, message);
 			if (!decrypted) {
 				return;
 			}
 
-			return hander(peerId, decrypted);
+			return handler(peerId, decrypted.data);
 		}
 		return modifiedHandler;
 	};
@@ -151,6 +178,15 @@ define(['./preferences', './certificates', './stores/certificates'],
 	var PEER_CERTIFICATES = {};
 
 	var HANDLERS = {};
+
+	var sendHeartbeat = function(peerId) {
+		self.sendEncryptedMessage(peerId, "heartbeat", {"alive": true});
+	};
+
+	var sendReplication = async function(peerId) {
+		let stream = await db.getReplicationStream();
+		self.sendEncryptedMessage(peerId, "replication", stream);
+	};
 
 	/**
 	 * Handle an handshake message.
@@ -164,6 +200,7 @@ define(['./preferences', './certificates', './stores/certificates'],
 
 		if (!knownCertificate) {
 			// This is the first time we connect with this peer.
+			console.debug("sync:handleHandshake", peerId, "No known certificate for the peer.");
 
 			let shouldContinue = confirm(peerId + " presented certificate " + presentedCertificate + ", accept?");
 			if (!shouldContinue) {
@@ -188,30 +225,65 @@ define(['./preferences', './certificates', './stores/certificates'],
 			// TODO allow change of certificate?
 		}
 
-		console.debug("sync:handleHandshake", peerId, "Handshake successful.");
 
-		// Send an hello message.
-		self.sendEncryptedMessage(peerId, {"hello": "Hey!"});
+		if (message.outbound) {
+			// I received an outbound handshake, I need to shake back.
+			console.debug("sync:handleHandshake", peerId, "Shaking back, and waiting for first heartbeat.");
+			sendHandshake(peerId, false);
+		
+		} else {
+			// I received a shake back. Send my first heartbeat. Secure connection OK.
+			console.debug("sync:handleHandshake", peerId, "Handshake completed. Sending heartbeat.");
+			sendHeartbeat(peerId);
+			peerIsAlive(peerId);
+
+		}
+
 
 	};
 
-	var handleHello = async function(peerId, message) {
-		console.log("sync:handleHello", peerId, "says hello!", message);
+	/**
+	 * Mark the peer as alive, i.e. the connection was established.
+	 */
+	var peerIsAlive = function(peerId) {
+		if (self.connections[peerId].alive) {
+			// Connection was already alive.
+			return;
+		}
+
+		console.info("sync:peerIsAlive", peerId, 
+				     "Connected securely to peer.");
+	    self.connections[peerId].alive = true;
+	};
+
+	var handleHeartbeat = async function(peerId, message) {
+		console.debug("sync:handleHeartbeat", peerId, 
+					 "Beat received.", message);
+		peerIsAlive(peerId);
+		sendReplication(peerId);
+	};
+
+	var handleReplication = async function(peerId, message) {
+		console.debug("sync:handleReplication", peerId,
+					  "Peer wants to ensure replication.", message);
+		db.applyReplicationStream(message);
 	};
 
 	// Set protocol handlers
-	HANDLERS["handshake"] = unencryptedHandler	(handleHandshake);
-	HANDLERS["hello"]	  = encryptedHandler	(handleHello);
+	HANDLERS["handshake"] = 	unencryptedHandler	(handleHandshake);
+	HANDLERS["heartbeat"] = 	encryptedHandler	(handleHeartbeat);
+	HANDLERS["replication"] = 	encryptedHandler  	(handleReplication);
 
 	/**
 	 * Handle data received from a peer.
 	 */
-	self.dispatch = function(peerId, message) {
-		console.debug("sync:dispatch", peerId, message);
+	self.dispatch = async function(peerId, message) {
 
-		if (message.encrypted) {
-			message = self.decryptMessage(peerId, message);
-		}
+		console.debug(
+			"sync:dispatch", peerId, 
+			message.encrypted ? "(encrypted)" : "(unencrypted)",
+			message
+		);
 
 		let handler = HANDLERS[message.type];
 		if (!handler) {
@@ -220,19 +292,33 @@ define(['./preferences', './certificates', './stores/certificates'],
 		}
 
 		// Handle message
-		handler(peerId, message.data);
+		handler(peerId, message);
 	};
 
 	/**
 	 * Decrypt a message received from a known peer.
 	 */
-	self.decryptMessage = function(peerId, message) {
-		// TODO get peer's public key
-		//		verify signature {"signature"} using known public key
-		// 		if valid, decrypt symmetric key {"encryptedKey"}
-		//		use decrypted key to decrypt JSON data {"encryptedData"}
-		//		add decrypted data to message 
+	self.decryptMessage = async function(peerId, message) {
+		let peerPublicKey = await certStore.getPeerCertificate(peerId);
+			peerPublicKey = peerPublicKey.signature;
+		let privateKey = await getCertificates();
+			privateKey = privateKey.private.encryption;
 
+		// First, verify the signature
+		let validSignature = await crypto.verifySignature(
+			peerPublicKey, message.encryptedData.data, message.signature
+		);
+		if (!validSignature) {
+			console.error("sync:decryptMessage", peerId, "Invalid signature", message);
+			return;
+		}
+
+		// Decrypt the symmetric key
+		let symmetricKey = await crypto.decryptObject(privateKey, message.encryptedKey);
+
+		// Decrypt the message and append the clear text
+		let decryptedData = await crypto.decryptObject(symmetricKey, message.encryptedData);
+		message.data = decryptedData;
 		return message;
 	};
 
@@ -266,20 +352,25 @@ define(['./preferences', './certificates', './stores/certificates'],
 		self.sendRaw(peerId, {"type": type, "encrypted": false, "data": data});
 	};
 
-	self.sendEncryptedMessage = function(peerId, type, data) {
-		// TODO generate symmetric key
-		// 		encrypt symmetric key with peer's public key
-		// 		add key to message {"encryptedKey"}
-		//		serialise data to JSON
-		// 		encrypt data with symmetric key
-		//		add encrypted data to message {"encryptedData"}
-		//		generate signature with my private key
-		// 		add signature to message {"signature"}
-		let rawMessage = {"type": type, "encrypted": true,
-						  "encryptedKey": null, "encryptedData": null,
-						  "signature": null};
+	var sendEncryptedMessage = async function(peerId, type, data) {
+		let privateSignatureCertificate = await getCertificates();
+			privateSignatureCertificate = privateSignatureCertificate.private.signature;
+		let publicKey = await certStore.getPeerCertificate(peerId);
+		    publicKey = publicKey.encryption;
+		let symmetricKey = await crypto.generateSymmetricKey();
+		let encryptedSymmetricKey = await crypto.encryptObject(publicKey, symmetricKey);
+		let encryptedData = await crypto.encryptObject(symmetricKey, data);
+		let signature = await crypto.signData(privateSignatureCertificate, encryptedData.data);
+		let rawMessage = {"type": type, 
+						  "encrypted": true,
+						  "encryptedKey": encryptedSymmetricKey,
+						  "encryptedData": encryptedData,
+						  "signature": signature};
 		self.sendRaw(peerId, rawMessage);
 	};
+
+	self.sendEncryptedMessage = sendEncryptedMessage;
+
 
 	self.generateId = function() {
 		let alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -305,7 +396,7 @@ define(['./preferences', './certificates', './stores/certificates'],
 		return keypair;
 	};
 
-	self.getCertificates = async function() {
+	var getCertificates = async function() {
 		let publicSignatureCertificate   = preferences.get("sync:certificate:public:signature");
 		let publicEncryptionCertificate  = preferences.get("sync:certificate:public:encryption");
 		let privateSignatureCertificate  = preferences.get("sync:certificate:private:signature");
@@ -340,6 +431,8 @@ define(['./preferences', './certificates', './stores/certificates'],
 
 		return certificates;
 	};
+
+	self.getCertificates = getCertificates;
 
 	/**
 	 * Disable synchronisation. Stop all connections.

@@ -3,7 +3,10 @@
  *
  * The PouchDB database to store keys, and peer certificates.
  */
-define(['./libs/pouchdb.min.js'], function(PouchDB) {
+define(['./libs/pouchdb.min.js',
+        './libs/pouchdb.replication-stream.min.js',
+        './libs/memorystream.min.js'], 
+    function(PouchDB, ReplicationStream, MemoryStream) {
 
     self = {};
 
@@ -27,6 +30,8 @@ define(['./libs/pouchdb.min.js'], function(PouchDB) {
 
     var initialiseDatabases = function() {
         console.debug("database:initialiseDatabases", DATABASE_SHORT_NAMES);
+        PouchDB.plugin(ReplicationStream.plugin);
+        PouchDB.adapter('writableStream', ReplicationStream.adapters.writableStream);
         for (let i in DATABASE_SHORT_NAMES) {
             let shortName = DATABASE_SHORT_NAMES[i]
             let longName = getDatabaseLongName(shortName);
@@ -79,6 +84,50 @@ define(['./libs/pouchdb.min.js'], function(PouchDB) {
     }
 
     self.find = find;
+
+    var getReplicationStreamForDatabase = async function(shortName) {
+        let database = getDatabase(shortName);
+        let output = "";
+        let stream = new MemoryStream();
+        stream.on('data', function(chunk) {
+            output += chunk.toString();
+        });
+        let ok = await database.dump(stream);
+        return output;
+    };
+
+    var getReplicationStream = async function() {
+        let streams = {};
+        for (let i in DATABASE_SHORT_NAMES) {
+            let shortName = DATABASE_SHORT_NAMES[i];
+            streams[shortName] = await getReplicationStreamForDatabase(shortName);
+        }
+        return streams;
+    };
+
+    self.getReplicationStream = getReplicationStream;
+
+
+    var applyReplicationStreamToDatabase = async function(shortName, streamString) {
+        let database = getDatabase(shortName);
+        let stream = new MemoryStream(streamString);
+        let ok = await database.load(stream);
+        return;
+    };
+
+    var applyReplicationStream = function(stream) {
+        let results = {};
+        for (let i in DATABASE_SHORT_NAMES) {
+            let shortName = DATABASE_SHORT_NAMES[i];
+            results[shortName] = applyReplicationStreamToDatabase(
+                shortName, stream[shortName]
+            );
+        }
+        return results;
+
+    };
+
+    self.applyReplicationStream = applyReplicationStream;
 
 
     self.init = function() {

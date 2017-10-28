@@ -14,12 +14,13 @@ define(['../database.js'], function(db) {
     }
 
     var getPeerCertificate = async function(peerId) {
-        console.debug("stores/certificates:getPeerCertificate", peerId);
         try {
             let certificate = await db.get(DB_NAME, peerId);
+            console.debug("stores/certificates:getPeerCertificate", peerId, certificate);
             return certificate;
         } catch (e) {
             // Certificate not available.
+            console.debug("stores/certificates:getPeerCertificate", peerId, "Unavailable.");
             return null;
         }
     };
