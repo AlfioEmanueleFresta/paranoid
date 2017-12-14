@@ -13,6 +13,14 @@ define(['../database.js'], function(db) {
         console.debug("stores/certificates:init");
     }
 
+    var getAllPeers = async function() {
+        let peers = await db.all(DB_NAME);
+        console.debug("stores/certificates:getAllPeers", peers);
+        return peers;
+    };
+
+    self.getAllPeers = getAllPeers;
+
     var getPeerCertificate = async function(peerId) {
         try {
             let certificate = await db.get(DB_NAME, peerId);

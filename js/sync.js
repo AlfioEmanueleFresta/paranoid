@@ -8,6 +8,7 @@ define(['./preferences', './certificates', './stores/certificates',
 	function(preferences, certificates, certStore, crypto, db) {
 
 	var PREFERENCES_CHECK_EVERY_MS = 5000;
+	var AUTO_CONNECT_DELAY = 3000;
 
 	self = {
 		"enabled": false
@@ -28,6 +29,16 @@ define(['./preferences', './certificates', './stores/certificates',
 		self.enabled = true;
 	};
 
+	var connectToKnownPeers = async function() {
+		let knownPeers = await getKnownPeers();
+		console.debug("sync:connectToKnownPeers", knownPeers);
+		for (let i in knownPeers) {
+			let peer = knownPeers[i];
+			let peerId = peer.id;
+			self.connectToPeer(peerId);
+		}
+	};
+
 	self.connect = async function() {
 		
 		// Get PeerJS preferences
@@ -43,6 +54,9 @@ define(['./preferences', './certificates', './stores/certificates',
 		self.peer.on("open", function(id) {
 			console.debug("sync:connect:open", id);
 			peerId = id;
+
+			// Connected. Search for known peers.
+			setTimeout(connectToKnownPeers, AUTO_CONNECT_DELAY);
 		});
 		self.peer.on("error", function(error) {
 			console.debug("sync:onerror", error);
@@ -56,7 +70,7 @@ define(['./preferences', './certificates', './stores/certificates',
 		return true;
 	};
 
-	self.connectToPeer = function(peerId) {
+	self.connectToPeer = function(peerId, failSilently) {
 		console.debug("sync:connectToPeer", peerId);
 
 		// Check if a connection was already there
@@ -67,7 +81,6 @@ define(['./preferences', './certificates', './stores/certificates',
 							  "The connection had been established, but was not " +
 							  "alive. Reconnecting...");
 				self.disconnectPeer(peerId);
-
 			} else {
 				console.warn("sync:connectToPeer", peerId,
 						     "Connection already established, and peer alive.");
@@ -80,9 +93,25 @@ define(['./preferences', './certificates', './stores/certificates',
 		try {
 			newConnection = self.peer.connect(peerId);
 		} catch (error) {
-			console.error("sync:connectToPeer", error);
+			!failSilently && console.error("sync:connectToPeer", error);
 		}
 		self.registerConnection(newConnection, true);
+	};
+
+	var getKnownPeers = async function() {
+		return certStore.getAllPeers();
+	};
+
+	self.getKnownPeers = getKnownPeers;
+
+	self.getAlivePeers = function() {
+		let peers = [];
+		for (let peerId in self.connections) {
+			if ( self.connections[peerId].alive ) {
+				peers.push(peerId);
+			}
+		}
+		return peers;
 	};
 
 	self.disconnectPeer = function(peerId) {
@@ -266,7 +295,36 @@ define(['./preferences', './certificates', './stores/certificates',
 	var handleReplication = async function(peerId, message) {
 		console.debug("sync:handleReplication", peerId,
 					  "Peer wants to ensure replication.", message);
-		db.applyReplicationStream(message);
+		await db.applyReplicationStream(message);
+	};
+
+	// Replicate local changes to a peer
+	var replicateChangeToPeer = async function(peerId, change) {
+		console.debug("sync:replicateChangeToPeer", peerId);
+		// TODO this should use change only, but currently initiates full synchronisation
+		sendReplication(peerId);
+	};
+
+	var replicateChangeToAllPeers = async function(change) {
+		let peerIds = self.getAlivePeers();
+		for (let i in peerIds) {
+			let peerId = peerIds[i];
+			replicateChangeToPeer(peerId, change);
+		};
+	};
+
+	var listenForChanges = function() {
+		let changesCallback = function(change) {
+			console.debug("sync:changesCallback", change);
+
+			if (self.enabled) {
+				replicateChangeToAllPeers(change);
+
+				// TODO if it's a new peer, connect to it
+				connectToKnownPeers();
+			}
+		};
+		db.onChange(changesCallback);
 	};
 
 	// Set protocol handlers
@@ -465,6 +523,7 @@ define(['./preferences', './certificates', './stores/certificates',
 
 		// Check the preferences now and then.
 		self.checkPreferences();
+		listenForChanges();
 		setInterval(self.checkPreferences, PREFERENCES_CHECK_EVERY_MS);
 	};
 
